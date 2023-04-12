@@ -1,0 +1,1 @@
+-I/Users/nick/Documents/IoT/capstone/motion_finder/include/libjpeg/ -L/Users/nick/Documents/IoT/capstone/motion_finder/include/libjpeg/ -libjpeg
