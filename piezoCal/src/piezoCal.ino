@@ -12,8 +12,8 @@ SYSTEM_MODE(SEMI_AUTOMATIC)
 
 #include "credentials.h"
 
-const int PIEZO_PIN_L = A2;
-const int PIEZO_PIN_R = A3;
+const int PIEZO_PIN_L = A3;
+const int PIEZO_PIN_R = A4;
 
 
 const int SERIAL_TIMEOUT = 10*1000;   // ms to wait for serial connection - may be absent

@@ -6,7 +6,8 @@
         "list": "cpp",
         "vector": "cpp",
         "xhash": "cpp",
-        "xstring": "cpp"
+        "xstring": "cpp",
+        "cmath": "cpp"
     },
     "particle.targetDevice": ""
 }
