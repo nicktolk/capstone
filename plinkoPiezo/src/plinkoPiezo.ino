@@ -251,10 +251,14 @@ void loop() {
     if (row == 0){
       col = map(lr, PIEZO_MIN_O, PIEZO_MAX_O, 0, 5);
     } else {
-      if (lr > lrLast){
-        col++;
-      } else {
-        col--;
+      if (row % 2){   // 4 pegs on odd rows
+        if (lr < lrLast && col > 0){
+          col--;
+        }
+      } else {        // 5 pegs on even rows
+        if (lr > lrLast && col < 4){
+          col++;
+        }
       }
     }
     col = (col > 4) ? 4 : (col < 0) ? 0 : col;
