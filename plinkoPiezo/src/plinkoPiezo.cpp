@@ -6,9 +6,9 @@
 #line 1 "c:/Users/nick/Documents/IoT/capstone/plinkoPiezo/src/plinkoPiezo.ino"
 /*
  * Project plinkoPiezo
- * Description:
- * Author:
- * Date:
+ * Description: Uses a pair of piezo elements attached to a Plinko board to triangulate and publish position of falling puck
+ * Author:  Nick Tolk
+ * Date:    10-APR-2023
  */
 //#define LIVE
 void setup();
@@ -23,6 +23,13 @@ SYSTEM_MODE(SEMI_AUTOMATIC)
 const bool liveRun = false;
 #endif
 SYSTEM_THREAD(ENABLED)
+
+
+const int TEST_POINTS = 11;
+const int TEST_ROWS[] = {0, 1, 2, 2, 3, 3, 4, 5, 6, 7, 7};
+const int TEST_COLS[] = {3, 2, 2, 1, 1, 2, 2, 1, 1, 0, 1};
+int testIndex = 0;
+
 
 #include <math.h>
 #include <iostream>
@@ -52,11 +59,11 @@ const int EVENT_LED = D4;
 
 const int PEG_ROWS = 8;   // starting from top (0), even rows have 5 pegs and odd rows have 4
 
-// coordinates on KAFB for mapping
-const float LAT_LEFT = 35.047566;
-const float LAT_RIGHT = 35.045589;
-const float LON_BOTTOM = -106.549066;
-const float LON_TOP = -106.550504;
+// coordinates on Plaza for mapping
+const double LAT_TOP = 35.08799050651442;
+const double LAT_BOTTOM = 35.08560415806543;
+const double LON_RIGHT = -106.65038177579693;
+const double LON_LEFT = -106.65203434020583;
 
 const int PIEZO_MIN_O = -100;
 const int PIEZO_MAX_O = 100;
@@ -65,7 +72,10 @@ const float PIEZO_MAX_I = 4.0;
 
 const float PIEZO_THRESH_L =  60.0;
 const float PIEZO_THRESH_R =  60.0;
-const int PIEZO_TIMEOUT = 40*1000;    // us to consider an impact missed or erroneous
+const int PIEZO_TIMEOUT = 60*1000;    // us to consider an impact missed or erroneous
+
+const int NEW_GAME_T = 500;           // ms to condider a game restarted
+const int EVENT_T = 200;              // ms to keep event LED lit
 
 const int SERIAL_TIMEOUT = 10*1000;   // ms to wait for serial connection - may be absent
 const int PUB_DELAY = 200;            // ms to wait between MQTT publishes
@@ -84,7 +94,7 @@ int dataIndex = 0;
 #define ONBOARD_LED D7
 #endif
 
-void mqtt_setup();
+//void mqtt_setup();
 void MQTT_connect();
 bool MQTT_ping();
 //void createEventPayLoad(int x, int y, int t);
@@ -107,6 +117,10 @@ int tDiff;
 // used to blink onboard LED erradically during Serial startup and indicate events
 bool eventOn = false;
 
+system_tick_t tNew;   // tracks last impact to decide if a new game has been started
+int lr, lrLast, mag;
+double latOut, lonOut;
+
 int milliStart;
 unsigned long microStart;
 long microNow;
@@ -124,8 +138,6 @@ uint8_t r, g, b;
 
 bool playing;     // true when game is in play
 int row, col;
-const int NEW_GAME_T = 2000;  // ms to condider a game restarted
-const int EVENT_T = 200;      // ms to keep event LED lit
 void resetLeft();
 void resetRight();
 void setLights(int lr, int mag);
@@ -185,9 +197,6 @@ void setup() {
   row = -1;
 }
 
-system_tick_t tNew;   // tracks last impact to decide if a new game has been started
-int lr, lrLast, mag;
-float latOut, lonOut;
 void loop() {
   if (liveRun){
     MQTT_connect();
@@ -260,28 +269,41 @@ void loop() {
     lr = (int)round(map(tDiff/1000.0, PIEZO_MIN_I, PIEZO_MAX_I, (float)PIEZO_MIN_O, (float)PIEZO_MAX_O));
     mag = (int)round(sqrt(mLeft * mLeft + mRight * mRight));
     if (row == 0){
-      col = map(lr, PIEZO_MIN_O, PIEZO_MAX_O, 0, 5);
+      col = map(lr, PIEZO_MIN_O, PIEZO_MAX_O, 0, 4);
     } else {
-      if (lr > lrLast){
-        col++;
-      } else {
-        col--;
+      if (row % 2){   // 4 pegs on odd rows
+        if (lr < lrLast && col > 0){
+          col--;
+        }
+      } else {        // 5 pegs on even rows
+        if (lr > lrLast && col < 4){
+          col++;
+        }
       }
     }
     col = (col > 4) ? 4 : (col < 0) ? 0 : col;
+
+if (testIndex < TEST_POINTS){
+  row = TEST_ROWS[testIndex];
+  col = TEST_COLS[testIndex++];
+}
+
+
+
+
     lrLast = lr;
-    lonOut = map((float)row, 0.0, (float)PEG_ROWS - 1, (float)LON_BOTTOM, (float)LON_TOP);
+    latOut = map((float)row, 0.0, (float)PEG_ROWS - 1, (float)LAT_TOP, (float)LAT_BOTTOM);
     if (row % 2){   // 4 pegs on odd rows
-      latOut = map((float)col + 0.5, 0.0, 4.0, LAT_LEFT, LAT_RIGHT);
+      lonOut = map((float)col + 0.5, 0.5, 3.5, LON_LEFT, LON_RIGHT);
     } else {        // 5 pegs on even rows
-      latOut = map((float)col, 0.0, 5.0, LAT_LEFT, LAT_RIGHT);
+      lonOut = map((float)col, 0.0, 4.0, LON_LEFT, LON_RIGHT);
     }
 //    createEventPayLoad(mLeft, mRight, tDiff/1000.0, tLeft, tRight, elapsed / 1000*1000.0);
     createEventPayLoad(latOut, lonOut);
     if (!liveRun){
-//    Serial.printf("\nSz:%d, Ele:%s\n", mqttVector.size(), mqttVector.front().c_str());
-      Serial.printf("XY: %5d, Z: %5d, tL:%ld     \n", lr, mag, tLeft);
-      Serial.printf("R: %d, C: %d, Lat: %8.4f, Lon: %8.4f\n", row, col, latOut, lonOut);
+    Serial.printf("%s\n", mqttVector.front().c_str());
+//      Serial.printf("XY: %5d, Z: %5d, tL:%ld     \n", lr, mag, tLeft);
+//      Serial.printf("R: %d, C: %d, Lat: %8.4f, Lon: %8.4f\n", row, col, latOut, lonOut);
     }
     setLights(lr, mag);
     // reset impact times and levels
@@ -291,13 +313,13 @@ void loop() {
   }
 
   if (tLeft >= 0 && (microNow - tLeft) > PIEZO_TIMEOUT){
-    Serial.printf("Unmatched event\n");
-    Serial.printf("l:%f, r:%f\n", mLeft, mRight);
+//    Serial.printf("Unmatched event\n");
+//    Serial.printf("l:%f, r:%f\n", mLeft, mRight);
     resetLeft();
   }
   if (tRight >= 0 && (microNow - tRight) > PIEZO_TIMEOUT){
-    Serial.printf("Unmatched event\n");
-    Serial.printf("l:%f, r:%f\n", mLeft, mRight);
+//    Serial.printf("Unmatched event\n");
+//    Serial.printf("l:%f, r:%f\n", mLeft, mRight);
     resetRight();
   }
 
@@ -330,7 +352,7 @@ float piezoAvg(uint8_t *data){
 // sets tLeft and mLeft to 0 and empties lIn[]
 void resetLeft(){
   if (!liveRun){
-    Serial.printf("RL\n");
+//    Serial.printf("RL\n");
   }
   for (piezoI = 0; piezoI < SAMPLES; piezoI++){
     lIn[piezoI] = 0;
@@ -342,7 +364,7 @@ void resetLeft(){
 // sets tRight and mRight to 0 and empties rIn[]
 void resetRight(){
   if (!liveRun){
-    Serial.printf("RR\n");
+//    Serial.printf("RR\n");
   }
   for (piezoI = 0; piezoI < SAMPLES; piezoI++){
     rIn[piezoI] = 0;

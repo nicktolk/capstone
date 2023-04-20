@@ -1,9 +1,0 @@
-build_jpeg_scons_*
-jpegsrc.*.tar.gz
-upstream
-lib
-example/data/development.icf
-example/iwtrace.txt
-example/run_*
-libjpeg_*.msrc
-libjpeg_*.mdev
