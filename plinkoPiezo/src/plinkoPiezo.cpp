@@ -5,17 +5,20 @@
 #include "Particle.h"
 #line 1 "c:/Users/nick/Documents/IoT/capstone/plinkoPiezo/src/plinkoPiezo.ino"
 /*
- * Project plinkoPiezo
- * Description: Uses a pair of piezo elements attached to a Plinko board to triangulate and publish position of falling puck
- * Author:  Nick Tolk
- * Date:    10-APR-2023
+ * Project:     plinkoPiezo
+ * Description: Uses a pair of piezo elements attached to a Plinko board to triangulate 
+ *              and publish position of falling puck. Coordinates of pegs are charted to
+ *              lat/lon coordinates of Albuquerque Plaza.
+ * Author:      Nick Tolk
+ * Date:        10-APR-2023
  */
-//#define LIVE
+// when not "LIVE", events are echoed over Serial rather than being published via MQTT
 void setup();
 void loop();
 float piezoAvg(uint8_t *data);
 void mPub();
-#line 8 "c:/Users/nick/Documents/IoT/capstone/plinkoPiezo/src/plinkoPiezo.ino"
+#line 10 "c:/Users/nick/Documents/IoT/capstone/plinkoPiezo/src/plinkoPiezo.ino"
+#define LIVE
 #ifdef LIVE
 const bool liveRun = true;
 #else
@@ -38,89 +41,79 @@ SYSTEM_THREAD(ENABLED)
 
 #include "credentials.h"
 
+const int ONBOARD_LED = D7;
+
 const int PIXEL_PIN = D2;
 const int PIXEL_COUNT = 2;
 #define PIXEL_TYPE WS2812B
 
 Adafruit_NeoPixel pixel(PIXEL_COUNT, PIXEL_PIN, PIXEL_TYPE);
 
-
-const int PIEZO_PIN_L = A3;
+const int PIEZO_PIN_L = A3;   // analog input pins
 const int PIEZO_PIN_R = A4;
-const int EVENT_LED = D4;
+const int EVENT_LED = D4;     // lit when publishing data
 
 const int PEG_ROWS = 8;   // starting from top (0), even rows have 5 pegs and odd rows have 4
 
-// coordinates on Plaza for mapping
+// coordinates on Albuquerque Plaza for plotting positions
 const double LAT_TOP = 35.08799050651442;
 const double LAT_BOTTOM = 35.08560415806543;
 const double LON_RIGHT = -106.65038177579693;
 const double LON_LEFT = -106.65203434020583;
 
+// these are all constants tweaked to calibrate to the board and elements being used
+// they're for handling input ranges on sensors, and thresholds for deciding whether data is impactful
 const int PIEZO_MIN_O = -100;
 const int PIEZO_MAX_O = 100;
 const float PIEZO_MIN_I = -1.5;
 const float PIEZO_MAX_I = 4.0;
-
 const float PIEZO_THRESH_L =  60.0;
 const float PIEZO_THRESH_R =  60.0;
 const float PIEZO_THRESH_ROW = 70.0;
-const int PIEZO_TIMEOUT = 60*1000;    // us to consider an impact missed or erroneous
+// us to consider an impact missed or erroneous
+const int PIEZO_TIMEOUT = 60*1000;
 
 const int NEW_GAME_T = 500;           // ms to condider a game restarted
-const int EVENT_T = 200;              // ms to keep event LED lit
+const int EVENT_T = 200;              // ms to keep event LED lit when publishing
 
 const int SERIAL_TIMEOUT = 10*1000;   // ms to wait for serial connection - may be absent
 const int PUB_DELAY = 200;            // ms to wait between MQTT publishes
-unsigned long lastPub;
+unsigned long lastPub;                // for timing
 
-const uint16_t SAMPLES = 4;
-uint8_t lIn[SAMPLES];
-uint8_t rIn[SAMPLES];
-system_tick_t tIn[SAMPLES];
+const uint16_t SAMPLES = 4;     // average over several samples as low-pass
+uint8_t lIn[SAMPLES];           // left piezo data
+uint8_t rIn[SAMPLES];           // right piezo data
+system_tick_t tIn[SAMPLES];     // time data
 
-unsigned long lastTick = 0;
-int elapsed;
+unsigned long lastTick = 0;     // stores us (micros()) ticks for timing
+int elapsed;                    // us since lastTick
 int dataIndex = 0;
 
-#ifndef ONBOARD_LED
-#define ONBOARD_LED D7
-#endif
-
-//void mqtt_setup();
-void MQTT_connect();
+// run every timt through loop() to keep alive
+void MQTT_connect();  
 bool MQTT_ping();
-//void createEventPayLoad(int x, int y, int t);
-void createEventPayLoad(float x, float y, float tDiff, long tLeft, long tRight, float t);
+
+// creates JSON payload to be published by mPub() thread
 void createEventPayLoad(float lat, float lon);
 
 TCPClient TheClient; 
 Adafruit_MQTT_SPARK mqtt(&TheClient,AIO_SERVER,AIO_SERVERPORT,AIO_USERNAME,AIO_KEY); 
 Adafruit_MQTT_Publish pubFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/latlon");
-//Adafruit_MQTT_Publish pubFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/plinko");
-Adafruit_MQTT_Publish pubFeedPos = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/plinkoLR");
 
-// current readings from piezo inputs
-int piezoL, piezoR;
-//long t;
-// tLeft and tRight are >= 0 to indicate event time. -1 means nothing currentle registered.
-long tLeft, tRight;
-// difference between left and right impact times; used for triangulation
-int tDiff;
-// used to blink onboard LED erradically during Serial startup and indicate events
-bool eventOn = false;
+int piezoL, piezoR; // most recent readings from piezo inputs
+long tLeft, tRight; // tLeft and tRight are >= 0 to indicate event time. -1 means nothing currently registered.
+int tDiff;          // difference between left and right impact times; used for triangulation
+bool eventOn = false; // used to blink onboard LED erradically during Serial startup and indicate events
 
-system_tick_t tNew;   // tracks last impact to decide if a new game has been started
-int lr, lrLast, mag;
-double latOut, lonOut;
+system_tick_t tNew;     // tracks last impact to decide if a new game has been started
+int lr, lrLast, mag;    // time of impact offsets and magnitude of piezo read
+double latOut, lonOut;  // values published correlating peg positions to world lat/lon
 
-int milliStart;
+// microStart and microNow are used to reset timing and record TOI
 unsigned long microStart;
 long microNow;
-int cnt = 0;
-char strRand[64];
+
 std::vector<String> mqttVector;
-std::vector<int> tVector;
 
 int piezoI;
 float sum;
@@ -137,7 +130,7 @@ void setLights(int lr, int mag);
 
 void setup() {
   Serial.begin(9600);
-  // mPub will publish Strings in mqttVector to "/feeds/plinko" and "/feeds/plinkoLR"
+  // mPub will publish Strings in mqttVector to "/feeds/plinko"
   new Thread("mPub", mPub);
 
   pinMode(PIEZO_PIN_L, INPUT); 
@@ -362,14 +355,10 @@ void mPub(){
       lastPub = millis();
       strOut = mqttVector.front();
       mqttVector.erase(mqttVector.begin());
-      if (tVector.size() > 0){
-        tOut = tVector.front();
-        tVector.erase(tVector.begin());
-      }
+
       if (liveRun){
         if(mqtt.Update()) {
           pubFeed.publish(strOut);
-//          pubFeedPos.publish(tOut);
         }
       } 
     }
@@ -416,23 +405,7 @@ bool MQTT_ping() {
 }
 
 // crafts JSON packet from arguments, then pushes that onto mqttVector to be handled elsewhere
-// also (for now) creates separate packet pushed to tVector for timing debugging
-void createEventPayLoad(float x, float y, float tDiff, long tLeft, long tRight, float t) {
-  JsonWriterStatic<256> jw;
-  {
-    JsonWriterAutoObject obj(&jw);
-
-    jw.insertKeyValue ("l", x);
-    jw.insertKeyValue ("r", y);
-    jw.insertKeyValue ("tDiff", tDiff);
-    jw.insertKeyValue ("tL", tLeft);
-    jw.insertKeyValue ("tR", tRight);
-    jw.insertKeyValue ("t", t);
-  }
-  tVector.push_back(round(map(tDiff, PIEZO_MIN_I, PIEZO_MAX_I, (float)PIEZO_MIN_O, (float)PIEZO_MAX_O)));
-  mqttVector.push_back(jw.getBuffer());
-}
-
+// previously also created separate packet pushed to tVector for timing
 void createEventPayLoad(float lat, float lon) {
   JsonWriterStatic<256> jw;
   {
