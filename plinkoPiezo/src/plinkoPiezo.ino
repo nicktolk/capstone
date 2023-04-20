@@ -13,20 +13,12 @@ const bool liveRun = false;
 #endif
 SYSTEM_THREAD(ENABLED)
 
-
-const int TEST_POINTS = 11;
-const int TEST_ROWS[] = {0, 1, 2, 2, 3, 3, 4, 5, 6, 7, 7};
-const int TEST_COLS[] = {3, 2, 2, 1, 1, 2, 2, 1, 1, 0, 1};
-int testIndex = 0;
-
-
 #include <math.h>
 #include <iostream>
 #include <vector>
 #include <string>
 #include "neopixel.h"
-//#include <SPI.h>
-//#include <SdFat.h>
+
 // these are used for image publication to Adafruit dashboard
 #include <Adafruit_MQTT.h>
 #include "Adafruit_MQTT/Adafruit_MQTT_SPARK.h"
@@ -61,6 +53,7 @@ const float PIEZO_MAX_I = 4.0;
 
 const float PIEZO_THRESH_L =  60.0;
 const float PIEZO_THRESH_R =  60.0;
+const float PIEZO_THRESH_ROW = 70.0;
 const int PIEZO_TIMEOUT = 60*1000;    // us to consider an impact missed or erroneous
 
 const int NEW_GAME_T = 500;           // ms to condider a game restarted
@@ -165,7 +158,6 @@ void setup() {
   digitalWrite(EVENT_LED, eventOn);
   if (Serial.available()){
     delay(200);
-//    Serial.setDebugOutput(true);
     Serial.println("Serial is up!");
   }
   if (liveRun){
@@ -217,7 +209,7 @@ void loop() {
     rAvg = piezoAvg(rIn);
   }
   if (!liveRun){
-//    Serial.printf("\r%6.2f, %6.2f, %f", lAvg, rAvg, (micros()-microStart)/1000000.0);
+    Serial.printf("\r%6.2f, %6.2f, %f", lAvg, rAvg, (micros()-microStart)/1000000.0);
   }
 
 // if we're not playing, the clock hasn't started
@@ -246,7 +238,9 @@ void loop() {
       microStart = micros();      // and we'll reset the clock for the last time this game
       lastTick = microStart;
     }
-    row++;
+    if (sqrt(mLeft * mLeft + mRight + mRight) > PIEZO_THRESH_ROW){
+      row++;
+    }
     if (!eventOn){
       eventOn = true;
       digitalWrite(EVENT_LED, HIGH);
@@ -272,14 +266,6 @@ void loop() {
     }
     col = (col > 4) ? 4 : (col < 0) ? 0 : col;
 
-if (testIndex < TEST_POINTS){
-  row = TEST_ROWS[testIndex];
-  col = TEST_COLS[testIndex++];
-}
-
-
-
-
     lrLast = lr;
     latOut = map((float)row, 0.0, (float)PEG_ROWS - 1, (float)LAT_TOP, (float)LAT_BOTTOM);
     if (row % 2){   // 4 pegs on odd rows
@@ -287,12 +273,9 @@ if (testIndex < TEST_POINTS){
     } else {        // 5 pegs on even rows
       lonOut = map((float)col, 0.0, 4.0, LON_LEFT, LON_RIGHT);
     }
-//    createEventPayLoad(mLeft, mRight, tDiff/1000.0, tLeft, tRight, elapsed / 1000*1000.0);
     createEventPayLoad(latOut, lonOut);
     if (!liveRun){
-    Serial.printf("%s\n", mqttVector.front().c_str());
-//      Serial.printf("XY: %5d, Z: %5d, tL:%ld     \n", lr, mag, tLeft);
-//      Serial.printf("R: %d, C: %d, Lat: %8.4f, Lon: %8.4f\n", row, col, latOut, lonOut);
+      Serial.printf("%s\n", mqttVector.front().c_str());
     }
     setLights(lr, mag);
     // reset impact times and levels
@@ -302,13 +285,9 @@ if (testIndex < TEST_POINTS){
   }
 
   if (tLeft >= 0 && (microNow - tLeft) > PIEZO_TIMEOUT){
-//    Serial.printf("Unmatched event\n");
-//    Serial.printf("l:%f, r:%f\n", mLeft, mRight);
     resetLeft();
   }
   if (tRight >= 0 && (microNow - tRight) > PIEZO_TIMEOUT){
-//    Serial.printf("Unmatched event\n");
-//    Serial.printf("l:%f, r:%f\n", mLeft, mRight);
     resetRight();
   }
 
